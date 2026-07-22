@@ -1,4 +1,3 @@
-# ===== text_prompts.py для AI-бота =====
 import random
 
 SYSTEM_PROMPT = (
