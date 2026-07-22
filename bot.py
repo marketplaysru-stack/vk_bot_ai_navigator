@@ -11,6 +11,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import random
 
 # ===== ПРИНУДИТЕЛЬНЫЙ ВЫВОД ЛОГОВ =====
 sys.stdout.reconfigure(line_buffering=True)
@@ -36,11 +37,10 @@ def log(msg):
     logging.info(msg)
 
 # ===== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ =====
-BOT_TOKEN = os.getenv("BOT_TOKEN")                     # Токен Telegram-бота (для AI)
+BOT_TOKEN = os.getenv("BOT_TOKEN")                     # Токен Telegram-бота для AI (обычно Nadezhda_Pavlovna_bot)
 VK_TOKEN = os.getenv("VK_TOKEN_AI")                    # Токен AI-группы (пользовательский)
 VK_GROUP_ID = os.getenv("VK_GROUP_ID_AI")              # -240273450
 AGNES_API_KEY = os.getenv("AGNES_API_KEY")
-GIGACHAT_API_KEY = os.getenv("GIGACHAT_API_KEY")
 PORT = int(os.getenv("PORT", 8080))
 
 if not BOT_TOKEN:
@@ -58,11 +58,9 @@ except ValueError:
     log(f"❌ VK_GROUP_ID_AI должен быть числом, получено: {VK_GROUP_ID}")
     sys.exit(1)
 if not AGNES_API_KEY:
-    log("⚠️ AGNES_API_KEY не задан (картинки через Pollinations)")
-if not GIGACHAT_API_KEY:
-    log("⚠️ GIGACHAT_API_KEY не задан (GigaChat не будет использоваться)")
+    log("⚠️ AGNES_API_KEY не задан (картинки только через Pollinations)")
 
-log("🚀 Запуск бота для AI-навигатора (с аналитикой и самообучением)")
+log("🚀 Запуск бота для AI-навигатора (70/20/10, эмодзи, хештеги, динамические картинки)")
 log(f"📌 Группа ID: {VK_GROUP_ID}")
 
 SCHEDULE_FILE = os.path.join(DATA_DIR, "schedule.json")
@@ -184,16 +182,27 @@ def save_schedule(schedule):
     except Exception as e:
         log(f"⚠️ Ошибка сохранения: {e}")
 
-# ===== ГЕНЕРАЦИЯ ТЕКСТА (AI-концепция) =====
+# ============================================================
+# ===== ГЕНЕРАЦИЯ ТЕКСТА (С ЭМОДЗИ, ХЕШТЕГАМИ, СТРУКТУРА 70/20/10) =====
+# ============================================================
+
 def generate_post_text(topic):
     log(f"🔤 Генерация текста для темы: {topic}")
     system_prompt = (
         "Ты — эксперт в области искусственного интеллекта, технологий и цифрового будущего. "
-        "Пиши увлекательные, познавательные посты для блога о AI. "
+        "Твоя задача — писать увлекательные, познавательные посты для блога о AI. "
         "Объясняй сложные вещи простым языком, делитесь инсайтами, новостями, этическими вопросами, "
         "примерами применения нейросетей. Пост должен быть вдохновляющим и полезным. "
-        "Задавай вопросы аудитории, чтобы стимулировать обсуждение. "
-        "Формат: дружелюбный, экспертный, без рекламы услуг."
+        "Ты не предлагаешь услуги и не продаёшь продукты — ты делишься знаниями. "
+        "Формат поста: дружелюбный, экспертный, но без высокомерия. "
+        "Пост должен быть структурирован по модели 70/20/10:\n"
+        "   — 70%: полезный экспертный контент (объяснение технологии, разбор принципов работы, примеры использования).\n"
+        "   — 20%: обсуждение, актуальные новости или этические аспекты, связанные с темой.\n"
+        "   — 10%: вовлекающий элемент — вопрос к аудитории, опрос, призыв к действию (например, «А вы уже пробовали использовать ChatGPT в работе?»).\n"
+        "Используй эмодзи для разделения смысловых блоков (например, 🤖, 💡, 🔬, 📈, 🌐, ⚙️, 🧠, 🔍, 🚀, 💬, 📊, 🎯, ✨).\n"
+        "Разделяй блоки с помощью символов-разделителей (например, '---' или '✦').\n"
+        "В конце поста обязательно добавь 5–7 хештегов на русском языке, соответствующих теме (например, #искусственныйинтеллект #нейросети #AI #технологии #будущее #машинноеобучение).\n"
+        "Пост должен быть визуально привлекательным, легко читаемым, с короткими абзацами."
     )
     user_prompt = f"Тема: {topic}"
     headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
@@ -246,17 +255,12 @@ def save_stats(stats):
         log(f"⚠️ Ошибка сохранения статистики: {e}")
 
 def fetch_post_stats(post_id, owner_id):
-    """
-    Получает статистику поста через VK API.
-    Возвращает dict с полями likes, reposts, comments, views.
-    """
     try:
         params = {
             "posts": f"{owner_id}_{post_id}",
             "access_token": VK_TOKEN,
             "v": "5.131"
         }
-        # Используем POST для wall.getById
         response = requests.post("https://api.vk.com/method/wall.getById", data=params, timeout=30)
         if response.status_code == 200:
             data = response.json()
@@ -298,7 +302,6 @@ def update_post_history(niche, topic, post_id, stats):
     return record
 
 def get_best_topics(niche, limit=5):
-    """Возвращает список тем с наибольшей вовлечённостью для данной ниши."""
     history = load_stats()
     niche_posts = [h for h in history if h.get("niche") == niche]
     if not niche_posts:
@@ -316,41 +319,78 @@ def get_best_topics(niche, limit=5):
     return best
 
 def enhance_topic_with_best_topics(niche, original_topic):
-    """Улучшает тему, добавляя успешные темы как пример."""
     best = get_best_topics(niche, limit=3)
     if not best:
         return original_topic
     return f"{original_topic} (учитывая успешные форматы: {', '.join(best)})"
 
 # ============================================================
-# ===== УЛУЧШЕННЫЙ ПРОМПТ ДЛЯ КАРТИНОК (с учётом статистики) =====
+# ===== ДИНАМИЧЕСКИЙ ПРОМПТ ДЛЯ РЕКЛАМНЫХ КАРТИНОК (AI-тематика) =====
 # ============================================================
 
 def build_image_prompt(topic, niche):
+    # Определяем тип контента по ключевым словам
+    keywords_lower = topic.lower()
+    scene_type = "generic"
+    if any(word in keywords_lower for word in ["нейросеть", "нейронная сеть", "обучение", "алгоритм", "данные", "распознавание"]):
+        scene_type = "neural_network"
+    elif any(word in keywords_lower for word in ["робот", "робототехника", "механизм", "автоматизация", "беспилотник"]):
+        scene_type = "robotics"
+    elif any(word in keywords_lower for word in ["чат", "бот", "голосовой", "ассистент", "помощник"]):
+        scene_type = "chatbot"
+    elif any(word in keywords_lower for word in ["генерация", "рисование", "картинка", "изображение", "музыка", "текст"]):
+        scene_type = "creative_ai"
+    elif any(word in keywords_lower for word in ["этика", "безопасность", "ответственность", "контроль", "риск"]):
+        scene_type = "ethics"
+    elif any(word in keywords_lower for word in ["будущее", "прогноз", "развитие", "технология", "инновация", "цифровой"]):
+        scene_type = "future"
+    elif any(word in keywords_lower for word in ["интерфейс", "взаимодействие", "hmi", "человек-машина"]):
+        scene_type = "interface"
+    else:
+        scene_type = "generic"
+
+    # Базовые составляющие промпта
+    scene_descriptions = {
+        "neural_network": "Абстрактное изображение искусственной нейронной сети, светящиеся линии, узлы, связи, поток данных, синий/фиолетовый неон, футуристичный стиль, высокотехнологичный фон.",
+        "robotics": "Футуристичный робот, механические детали, инженерия, современные технологии, движущиеся части, четкий фокус на механизмах, индустриальный дизайн, металл, стекло.",
+        "chatbot": "Интерфейс чат-бота, экран с диалогом, голограммы, абстрактные иконки, цифровой мир, минималистичный, современный UI/UX.",
+        "creative_ai": "Процесс творчества с помощью ИИ: кисть, палитра, музыкальные ноты, цифровое искусство, переплетение реального и виртуального, яркие краски, вдохновение.",
+        "ethics": "Баланс между человеком и машиной, весы, свет и тень, размышления о будущем, символы морали, абстрактная композиция, спокойные тона.",
+        "future": "Город будущего, летающие машины, небоскребы, неоновые вывески, голографические экраны, технологический прогресс, перспектива, динамика, кинематографичный кадр.",
+        "interface": "Сенсорный интерфейс, голографический дисплей, проекции, взаимодействие человека и машины, жесты, технологичный минимализм, стекло, свет.",
+        "generic": "Технологичный мир, светящиеся линии, сеть данных, абстрактные формы, цифровая эстетика, синий, фиолетовый, чёрный фон, современный стиль."
+    }
+
+    # Списки для вариативности
+    angles = ["крупный план", "общий план", "вид сверху", "вид снизу", "панорамный обзор", "динамичный ракурс", "фронтальный вид", "в перспективе"]
+    lightings = ["солнечный свет с золотым оттенком", "сумеречный свет с синими акцентами", "драматичное контровое освещение", "мягкий рассеянный свет", "профессиональное студийное освещение", "естественный дневной свет"]
+    moods = ["кинематографичный, эпичный", "спокойный, надёжный, основательный", "современный, футуристичный", "уютный, тёплый", "индустриальный, брутальный", "чистый, минималистичный"]
+
+    angle = random.choice(angles)
+    lighting = random.choice(lightings)
+    mood = random.choice(moods)
+
+    scene_desc = scene_descriptions.get(scene_type, scene_descriptions["generic"])
     enhanced_topic = enhance_topic_with_best_topics(niche, topic)
-    base = (
+
+    prompt = (
         f"Hyperrealistic cinematic photograph, square 1:1 format, {enhanced_topic}. "
-        "No text, no typography, no words, no letters, no numbers on the image. "
-        "May include stylized icons, logos, geometric shapes, abstract patterns, "
-        "branding elements, arrows, badges, or graphic overlays for visual appeal. "
-        "Professionally styled composition, dramatic high-contrast lighting, "
-        "cinematic color grading (rich reds, deep blues, warm golden highlights), "
-        "shallow depth of field, sharp focus on the main subject, "
-        "ultra-detailed textures (skin pores, fabric weaves, reflections, materials), "
-        "8K resolution, photorealistic, editorial quality, "
-        "reminiscent of high-end advertising or fashion photography, "
-        "emotionally compelling, vibrant yet natural colors, "
-        "background softly blurred with bokeh, spotlight effect, "
-        "modern aesthetic, perfect for social media cover, "
-        "professional retouching, no plastic or artificial look, "
-        "captured with Hasselblad H6D, 100mm lens, f/2.8, "
-        "natural motion frozen, dynamic energy, "
-        "atmospheric haze, subtle lens flare, volumetric light."
+        f"{scene_desc} "
+        f"Акцент на детализацию, высокое качество, 8K, фотореализм. "
+        f"Ракурс: {angle}. Освещение: {lighting}. Настроение: {mood}. "
+        "Без людей, если это не требуется по смыслу. Без текста и надписей. "
+        "Используйте цветовую гамму, соответствующую настроению: синие, фиолетовые, золотистые тона. "
+        "Композиция профессиональная, сбалансированная, привлекающая внимание. "
+        "Современный, рекламный, редакционный стиль."
     )
-    return base
+    return prompt
+
+# ============================================================
+# ===== ГЕНЕРАЦИЯ КАРТИНОК (приоритет Pollinations -> Agnes) =====
+# ============================================================
 
 def generate_image_agnes(prompt):
-    log("   🖼️ Попытка Agnes (улучшенный промпт)...")
+    log("   🖼️ Попытка Agnes...")
     if not AGNES_API_KEY:
         log("   AGNES_API_KEY не задан")
         return None
@@ -366,7 +406,7 @@ def generate_image_agnes(prompt):
             "https://apihub.agnes-ai.com/v1/images/generations",
             headers=headers,
             json=data,
-            timeout=120
+            timeout=180
         )
         if response.status_code != 200:
             raise Exception(f"HTTP {response.status_code}")
@@ -382,44 +422,8 @@ def generate_image_agnes(prompt):
         log(f"   ❌ Agnes окончательно: {e}")
         return None
 
-def generate_image_gigachat(prompt):
-    log("   🖼️ Попытка GigaChat (приоритетный)...")
-    if not GIGACHAT_API_KEY:
-        log("   GIGACHAT_API_KEY не задан")
-        return None
-    headers = {
-        "Authorization": f"Bearer {GIGACHAT_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "model": "GigaChat-Image",
-        "prompt": prompt,
-        "size": "1024x1024",
-        "n": 1
-    }
-    def _do():
-        response = requests.post(
-            "https://gigachat.devices.sberbank.ru/api/v1/images/generations",
-            headers=headers,
-            json=data,
-            timeout=120
-        )
-        if response.status_code != 200:
-            raise Exception(f"HTTP {response.status_code}")
-        json_resp = response.json()
-        if not json_resp.get("data") or len(json_resp["data"]) == 0:
-            raise Exception("Empty data")
-        return json_resp["data"][0]["url"]
-    try:
-        url = retry_call(_do, max_retries=2, delay=3, backoff=2)
-        log("   ✅ GigaChat успешно")
-        return url
-    except Exception as e:
-        log(f"   ❌ GigaChat окончательно: {e}")
-        return None
-
 def generate_image_pollinations(prompt):
-    log("   🖼️ Попытка Pollinations (улучшенный промпт)...")
+    log("   🖼️ Попытка Pollinations (бесплатный)...")
     try:
         short_prompt = prompt[:250] + " photorealistic, high quality, 1:1"
         prompt_encoded = urllib.parse.quote(short_prompt)
@@ -452,16 +456,11 @@ def download_image(url):
 
 # ===== ПУБЛИКАЦИЯ В VK (с POST для длинных запросов) =====
 def vk_api_request(method, params, token, retries=3):
-    """
-    Универсальный вызов VK API с автоматическим выбором метода (GET/POST).
-    Для методов, где тело может быть длинным, используется POST.
-    """
     base_url = "https://api.vk.com/method/"
     params = params.copy()
     params["access_token"] = token
     params["v"] = "5.131"
 
-    # Методы, которые требуют POST из-за возможной длины URL
     post_methods = ["wall.post", "wall.getById", "photos.saveWallPhoto"]
     use_post = method in post_methods
 
@@ -624,9 +623,8 @@ def execute_scheduled_post(item):
     log(f"✅ Текст получен, длина {len(post_text)}")
 
     sources = [
-        ("GigaChat", generate_image_gigachat),
-        ("Agnes", generate_image_agnes),
-        ("Pollinations", generate_image_pollinations)
+        ("Pollinations", generate_image_pollinations),
+        ("Agnes", generate_image_agnes)
     ]
 
     photo_uploaded = False
@@ -674,7 +672,6 @@ def execute_scheduled_post(item):
         else:
             log(f"❌ Ошибка публикации без фото: {error}")
 
-    # ===== СБОР СТАТИСТИКИ ПОСЛЕ ПУБЛИКАЦИИ =====
     if success and post_id:
         log(f"📊 Сбор статистики для поста {post_id}...")
         time.sleep(10)
@@ -715,8 +712,10 @@ def process_message(message):
     if text.startswith("/start"):
         send_message(chat_id,
             "👋 Бот для автопостинга в AI-навигатор.\n"
-            "🎨 Картинки: без текста, с рекламными иконками.\n"
+            "🤖 Экспертный блог об искусственном интеллекте.\n"
             "📊 Бот собирает статистику и учится на успешных постах.\n"
+            "🖼️ Динамические картинки под каждую тему.\n"
+            "📝 Посты с эмодзи, хештегами, структурой 70/20/10.\n"
             "/post_in тема минуты — добавить пост через N минут\n"
             "/run_now тема — опубликовать прямо сейчас\n"
             "/list — показать все задания\n"
@@ -770,9 +769,8 @@ def process_message(message):
                 return
 
             sources = [
-                ("GigaChat", generate_image_gigachat),
-                ("Agnes", generate_image_agnes),
-                ("Pollinations", generate_image_pollinations)
+                ("Pollinations", generate_image_pollinations),
+                ("Agnes", generate_image_agnes)
             ]
 
             photo_uploaded = False
@@ -899,7 +897,7 @@ def get_updates(offset):
 
 # ===== ГЛАВНЫЙ ЦИКЛ =====
 if __name__ == "__main__":
-    log("🤖 Бот для AI-навигатора (с аналитикой и самообучением) запущен")
+    log("🤖 Бот для AI-навигатора (70/20/10, эмодзи, хештеги) запущен")
     threading.Thread(target=scheduler_loop, daemon=True).start()
     update_id = 0
     while True:
