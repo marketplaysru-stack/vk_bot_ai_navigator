@@ -1,4 +1,3 @@
-# ===== image_prompts.py для AI-бота =====
 import random
 
 STYLES = [
