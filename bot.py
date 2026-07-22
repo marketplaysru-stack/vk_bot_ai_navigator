@@ -36,8 +36,8 @@ def log(msg):
     logging.info(msg)
 
 # ===== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ =====
-BOT_TOKEN = os.getenv("BOT_TOKEN")                     # Токен Telegram-бота (для AI используется старый или новый)
-VK_TOKEN = os.getenv("VK_TOKEN_AI")                    # Токен AI-группы
+BOT_TOKEN = os.getenv("BOT_TOKEN")                     # Токен Telegram-бота (для AI)
+VK_TOKEN = os.getenv("VK_TOKEN_AI")                    # Токен AI-группы (пользовательский)
 VK_GROUP_ID = os.getenv("VK_GROUP_ID_AI")              # -240273450
 AGNES_API_KEY = os.getenv("AGNES_API_KEY")
 GIGACHAT_API_KEY = os.getenv("GIGACHAT_API_KEY")
@@ -184,15 +184,16 @@ def save_schedule(schedule):
     except Exception as e:
         log(f"⚠️ Ошибка сохранения: {e}")
 
-# ===== ГЕНЕРАЦИЯ ТЕКСТА =====
+# ===== ГЕНЕРАЦИЯ ТЕКСТА (AI-концепция) =====
 def generate_post_text(topic):
     log(f"🔤 Генерация текста для темы: {topic}")
     system_prompt = (
-        "Ты — профессиональный SMM-менеджер и копирайтер. "
-        "Напиши яркий, вовлекающий пост для ВКонтакте по заданной теме. "
-        "Пост должен быть продающим, полезным и побуждать к действию. "
-        "Используй структуру: цепляющий заголовок (до 10 слов) → проблема аудитории → решение → практическая польза → призыв к действию. "
-        "Добавь эмодзи, разбей на короткие абзацы. В конце добавь 5 хештегов. Пиши человечно, без канцелярита."
+        "Ты — эксперт в области искусственного интеллекта, технологий и цифрового будущего. "
+        "Пиши увлекательные, познавательные посты для блога о AI. "
+        "Объясняй сложные вещи простым языком, делитесь инсайтами, новостями, этическими вопросами, "
+        "примерами применения нейросетей. Пост должен быть вдохновляющим и полезным. "
+        "Задавай вопросы аудитории, чтобы стимулировать обсуждение. "
+        "Формат: дружелюбный, экспертный, без рекламы услуг."
     )
     user_prompt = f"Тема: {topic}"
     headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
@@ -255,7 +256,8 @@ def fetch_post_stats(post_id, owner_id):
             "access_token": VK_TOKEN,
             "v": "5.131"
         }
-        response = requests.get("https://api.vk.com/method/wall.getById", params=params, timeout=30)
+        # Используем POST для wall.getById
+        response = requests.post("https://api.vk.com/method/wall.getById", data=params, timeout=30)
         if response.status_code == 200:
             data = response.json()
             if "response" in data and len(data["response"]) > 0:
@@ -448,14 +450,27 @@ def download_image(url):
         log(f"   ❌ Скачивание провалилось: {e}")
         return None
 
-# ===== ПУБЛИКАЦИЯ В VK =====
+# ===== ПУБЛИКАЦИЯ В VK (с POST для длинных запросов) =====
 def vk_api_request(method, params, token, retries=3):
+    """
+    Универсальный вызов VK API с автоматическим выбором метода (GET/POST).
+    Для методов, где тело может быть длинным, используется POST.
+    """
     base_url = "https://api.vk.com/method/"
     params = params.copy()
     params["access_token"] = token
     params["v"] = "5.131"
+
+    # Методы, которые требуют POST из-за возможной длины URL
+    post_methods = ["wall.post", "wall.getById", "photos.saveWallPhoto"]
+    use_post = method in post_methods
+
     def _do():
-        response = requests.get(base_url + method, params=params, timeout=60)
+        if use_post:
+            response = requests.post(base_url + method, data=params, timeout=60)
+        else:
+            response = requests.get(base_url + method, params=params, timeout=60)
+
         if response.status_code != 200:
             raise Exception(f"HTTP {response.status_code}")
         json_resp = response.json()
@@ -463,6 +478,7 @@ def vk_api_request(method, params, token, retries=3):
             log(f"   ❌ VK API ошибка в {method}: {json_resp['error']}")
             raise Exception(json_resp["error"]["error_msg"])
         return json_resp["response"]
+
     try:
         return retry_call(_do, max_retries=retries, delay=2, backoff=2)
     except Exception as e:
@@ -589,7 +605,7 @@ def post_to_vk(image_bytes, text):
             pass
         return False, f"Исключение: {str(e)}", False, None
 
-# ===== ВЫПОЛНЕНИЕ ЗАПЛАНИРОВАННОГО ПОСТА (с аналитикой) =====
+# ===== ВЫПОЛНЕНИЕ ЗАПЛАНИРОВАННОГО ПОСТА =====
 def execute_scheduled_post(item):
     if item.get("niche") != "ai":
         log(f"⏭️ Пропускаем задание для другой ниши: {item.get('niche')}")
@@ -690,7 +706,7 @@ def scheduler_loop():
             traceback.print_exc(file=sys.stdout)
         time.sleep(30)
 
-# ===== ОБРАБОТЧИКИ КОМАНД (с /stats и улучшенным промптом) =====
+# ===== ОБРАБОТЧИКИ КОМАНД =====
 def process_message(message):
     chat_id = message["chat"]["id"]
     text = message.get("text", "").strip()
@@ -700,7 +716,6 @@ def process_message(message):
         send_message(chat_id,
             "👋 Бот для автопостинга в AI-навигатор.\n"
             "🎨 Картинки: без текста, с рекламными иконками.\n"
-            "🔄 Приоритет: GigaChat -> Agnes -> Pollinations\n"
             "📊 Бот собирает статистику и учится на успешных постах.\n"
             "/post_in тема минуты — добавить пост через N минут\n"
             "/run_now тема — опубликовать прямо сейчас\n"
@@ -722,7 +737,6 @@ def process_message(message):
         if not history:
             send_message(chat_id, "📭 Нет данных по постам.")
             return
-        # Группируем по нишам (у нас только AI, но универсально)
         niche_groups = {}
         for h in history:
             niche = h.get("niche", "unknown")
@@ -800,7 +814,6 @@ def process_message(message):
                 else:
                     send_message(chat_id, f"❌ Ошибка публикации: {error}")
 
-            # Сбор статистики после публикации
             if success and post_id:
                 log(f"📊 Сбор статистики для поста {post_id}...")
                 time.sleep(10)
