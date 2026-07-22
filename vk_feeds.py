@@ -1,4 +1,3 @@
-# ===== vk_feeds.py для AI-бота =====
 import requests
 import logging
 import os
@@ -6,12 +5,11 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-# Список групп ВК для AI-ниши (замените на реальные ID с минусом)
 VK_FEED_SOURCES = {
     "ai": [
-        -12345678,   # пример, замените на реальный ID
-        -87654321,   # ещё одна группа
-        # можно добавить ещё
+        -233388182,   # первая группа
+        -131951429,   # вторая группа
+        -170335458,   # третья группа
     ],
 }
 
@@ -33,7 +31,7 @@ def save_processed_ids(ids):
             f.write(f"{pid}\n")
 
 def get_vk_api_token():
-    return os.getenv("VK_TOKEN_AI")  # используем токен AI-группы
+    return os.getenv("VK_TOKEN_AI")
 
 def count_today_posts_from_vk(schedule):
     today_str = datetime.now().strftime("%Y-%m-%d")
